@@ -1,0 +1,63 @@
+FROM ubuntu:22.04
+
+RUN apt update && apt-get install -y \
+    build-essential \
+    ocaml \
+    ocamlbuild \
+    automake \
+    autoconf \
+    libtool \
+    wget \
+    python-is-python3 \
+    libssl-dev \
+    git \
+    cmake \
+    perl \
+    libcurl4-openssl-dev \
+    protobuf-compiler \
+    libprotobuf-dev \
+    debhelper \
+    reprepro \
+    unzip \
+    pkgconf \
+    libboost-dev \
+    libboost-system-dev \
+    libboost-thread-dev \
+    lsb-release \
+    libsystemd0 \
+ && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workdir
+RUN git clone https://github.com/intel/linux-sgx.git
+
+WORKDIR /workdir/linux-sgx
+RUN make preparation
+RUN make sdk
+
+ENV BUILD_PLATFORM="docker"
+RUN make sdk_install_pkg
+RUN cd linux/installer/bin
+RUN linux/installer/bin/sgx_linux_x64_sdk_2.25.100.3.bin --prefix .
+
+ENV SGX_SDK=/workdir/linux-sgx/sgxsdk
+ENV PATH="$PATH:$SGX_SDK/bin:$SGX_SDK/bin/x64"
+ENV PKG_CONFIG_PATH="$SGX_SDK/pkgconfig"
+ENV LD_LIBRARY_PATH="$SGX_SDK/sdk_libs"
+
+RUN make psw
+RUN cd psw/ae/le && make
+RUN make deb_psw_pkg
+RUN make psw_install_pkg
+
+RUN make deb_local_repo
+RUN version=$(lsb_release -cs 2>/dev/null) && \
+    echo "deb [trusted=yes arch=amd64] file:/workdir/linux-sgx/linux/installer/deb/sgx_debian_local_repo $version main" >> /etc/apt/sources.list
+
+RUN apt update
+RUN apt-get -y install libsgx-launch libsgx-urts
+RUN apt-get -y install libsgx-epid libsgx-urts
+RUN apt-get -y install libsgx-quote-ex libsgx-urts
+RUN apt-get -y install libsgx-dcap-ql
+
+RUN cd /workdir/linux-sgx/SampleCode/LocalAttestation && make SGX_MODE=SIM
+RUN cd /workdir/linux-sgx/SampleCode/LocalAttestation/bin && ./app
